@@ -1,0 +1,15 @@
+# 编译输出目录
+build/
+bin/
+obj/
+# 编译生成的二进制文件
+*.elf
+*.bin
+*.hex
+*.map
+# VS Code 产生的配置
+.vscode/cmake-kits.json
+.vscode/ipch/
+# 其他临时文件
+*.o
+*.d
