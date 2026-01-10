@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "adc.h"
+#include "stm32f407xx.h"
 #include "stm32f4xx_hal.h"
 #include "stm32f4xx_hal_adc.h"
 #include "stm32f4xx_hal_gpio.h"
@@ -112,7 +113,7 @@ int main(void)
   lcd_init();
   printf("初始化完成\n");
 
-  __HAL_TIM_SET_COMPARE(&htim12, TIM_CHANNEL_2, 10000);
+  __HAL_TIM_SET_COMPARE(&htim12, TIM_CHANNEL_2, 6000);
   lcd_clear(WHITE);
   lcd_show_string(30, 50, 200, 16, 16, "Explorer F407", RED);
   lcd_show_string(30, 70, 200, 16, 16, "VSCode + CMake", BLUE);
@@ -135,14 +136,14 @@ int main(void)
     {
       adc_val=4000;
     }
-    pwm_val=20000-adc_val*4;
-    if (pwm_val<3000)
+    pwm_val=10000-(adc_val*5)/2;
+    if (pwm_val<1000)
     {
-      pwm_val=3000;
+      pwm_val=1000;
     }
-    if (pwm_val>18000)
+    if (pwm_val>8000)
     {
-      pwm_val=18000;
+      pwm_val=8000;
     }
 
     __HAL_TIM_SET_COMPARE(&htim12, TIM_CHANNEL_2, pwm_val);
