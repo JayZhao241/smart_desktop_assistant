@@ -19,11 +19,10 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "adc.h"
-#include "stm32f407xx.h"
-#include "stm32f4xx_hal.h"
+#include "rtc.h"
 #include "stm32f4xx_hal_adc.h"
-#include "stm32f4xx_hal_gpio.h"
-#include "stm32f4xx_hal_tim.h"
+#include "stm32f4xx_hal_def.h"
+#include "stm32f4xx_hal_rtc.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
@@ -34,6 +33,9 @@
 #include "lcd.h"
 #include <stdint.h>
 #include <stdio.h>
+
+#define V25 0.76f
+#define AVG_SLOPE 2.5f
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -56,6 +58,7 @@
 /* USER CODE BEGIN PV */
 uint32_t pwm_val=0;
 uint16_t adc_val=0;
+uint16_t temp_adc=0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -86,7 +89,7 @@ int main(void)
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-                                                                                                                                                                                                                                                 HAL_Init();
+                                                                      HAL_Init();
 
   /* USER CODE BEGIN Init */
 
@@ -106,17 +109,18 @@ int main(void)
   MX_FSMC_Init();
   MX_TIM12_Init();
   MX_USART1_UART_Init();
+  MX_RTC_Init();
   /* USER CODE BEGIN 2 */
-  HAL_TIM_PWM_Start(&htim12, TIM_CHANNEL_2); // ∆Ù∂Ø±≥π‚µ˜ ‘
+  HAL_TIM_PWM_Start(&htim12, TIM_CHANNEL_2); // ÂêØÂä®ËÉåÂÖâË∞ÉËØï
 
-  printf("LCD≥ı ºªØ÷–°≠°≠\n");
+  printf("LCDÂàùÂßãÂåñ‰∏≠‚Ä¶‚Ä¶\n");
   lcd_init();
-  printf("≥ı ºªØÕÍ≥…\n");
+  printf("ÂàùÂßãÂåñÂÆåÊàê\n");
 
   __HAL_TIM_SET_COMPARE(&htim12, TIM_CHANNEL_2, 6000);
   lcd_clear(WHITE);
-  lcd_show_string(30, 50, 200, 16, 16, "Explorer F407", RED);
-  lcd_show_string(30, 70, 200, 16, 16, "VSCode + CMake", BLUE);
+  // lcd_show_string(30, 50, 200, 16, 16, "Explorer F407", RED);
+  // lcd_show_string(30, 70, 200, 16, 16, "VSCode + CMake", BLUE);
   HAL_Delay(1000);
 
   /* USER CODE END 2 */
@@ -126,36 +130,72 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
-    HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
-    HAL_ADC_Start(&hadc3);
-    HAL_ADC_PollForConversion(&hadc3, 10); //÷∏∂®adc¬÷—Ø
-    adc_val=HAL_ADC_GetValue(&hadc3); //∂¡»°¥´∏–∆˜ ˝÷µ
 
-    //Ω”œ¬¿¥ µœ÷adc‘Ω–°£¨±≥π‚‘Ω¡¡
-    if (adc_val>4000) 
+    /* USER CODE BEGIN 3 */
+    RTC_TimeTypeDef sTime = {0};
+    RTC_DateTypeDef sDate = {0};
+
+    sTime.Hours = 00;
+    sTime.Minutes = 00;
+    sTime.Seconds = 00;
+    sTime.DayLightSaving = RTC_DAYLIGHTSAVING_NONE; 
+    sTime.StoreOperation = RTC_STOREOPERATION_RESET;
+    if (HAL_RTC_SetTime(&hrtc, &sTime,RTC_FORMAT_BIN))
     {
+      Error_Handler();
+    }
+    sDate.Year=26;
+    sDate.Month=01;
+    sDate.Date=01;
+    sDate.WeekDay=RTC_WEEKDAY_MONDAY;
+    if (HAL_RTC_SetDate(&hrtc, &sDate,RTC_FORMAT_BIN))
+    {
+      Error_Handler();
+    }
+    HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+
+    HAL_ADC_Start(&hadc3);
+    if (HAL_ADC_PollForConversion(&hadc3, 10)==HAL_OK) {
+        adc_val=HAL_ADC_GetValue(&hadc3); //ËØªÂèñ‰º†ÊÑüÂô®Êï∞ÂÄº
+    } //ÊåáÂÆöadcËΩÆËØ¢
+    HAL_ADC_Stop(&hadc3);
+
+    //Êé•‰∏ãÊù•ÂÆûÁé∞adcË∂äÂ∞èÔºåËÉåÂÖâË∂ä‰∫Æ
+    if (adc_val>4000)  {
       adc_val=4000;
     }
     pwm_val=10000-(adc_val*5)/2;
-    if (pwm_val<1000)
-    {
+    if (pwm_val<1000) {
       pwm_val=1000;
     }
-    if (pwm_val>8000)
-    {
+    if (pwm_val>8000){
       pwm_val=8000;
     }
 
     __HAL_TIM_SET_COMPARE(&htim12, TIM_CHANNEL_2, pwm_val);
 
-    lcd_show_string(30, 100, 200, 16, 16, "Light ADC:", BLACK);
-    lcd_show_num(120, 100, adc_val, 4, 16, BLUE);
-    
-    lcd_show_string(30, 120, 200, 16, 16, "PWM Val:", BLACK);
-    lcd_show_num(120, 120, pwm_val, 4, 16, RED);
+    //Êé•‰∏ãÊù•ËØªÂèñÂÜÖÈÉ®Ê∏©Â∫¶
+    HAL_ADC_Start(&hadc1);
+    if (HAL_ADC_PollForConversion(&hadc1, 10)==HAL_OK) {
+        temp_adc=HAL_ADC_GetValue(&hadc1); //ËØªÂèñ‰º†ÊÑüÂô®Êï∞ÂÄº
+        float temp_vol=(float)temp_adc*(3.3f/4096.0f); //Êç¢ÁÆóÊàêÊ∏©Â∫¶ÁîµÂéãÂÄº
+        float chip_temp=(temp_vol-V25)/AVG_SLOPE+0.025; //ËÆ°ÁÆóÊ∏©Â∫¶
 
+        //Âú®Â±èÂπï‰∏äÊòæÁ§∫
+        lcd_show_string(30, 140, 200, 16, 16, "Ê∏©Â∫¶:",BLACK);
+        lcd_show_num(120, 140, (uint32_t) chip_temp, 2, 16, RED);
+        lcd_show_string(140, 140, 200, 16, 16, "¬∞C", RED);
+    } //ÊåáÂÆöadcËΩÆËØ¢
+     HAL_ADC_Stop(&hadc1);
+    
+    //ËØªÂèñÂÆûÊó∂Êó∂Èó¥
+    HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
+    HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
+    
+    char time_str[20];
+    sprintf(time_str, "%02d:%02d:%02d", sTime.Hours, sTime.Minutes, sTime.Seconds);
+    lcd_show_string(50, 180,200, 24, 24, time_str, BLUE);
     HAL_Delay(100);
-    /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
 }
@@ -177,7 +217,8 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_LSE;
+  RCC_OscInitStruct.LSEState = RCC_LSE_ON;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;

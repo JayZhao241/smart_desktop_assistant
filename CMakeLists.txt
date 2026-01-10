@@ -66,17 +66,17 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
 
     # Add user defined libraries
 )
-# 1. ╤╗рЕ BSP ╨м SYSTEM б╥╬╤
+# 1. Е╝ Д╧┴ BSP Е▓▄ SYSTEM Х╥╞Е╬└
 set(BSP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/BSP)
 set(SYSTEM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/SYSTEM)
 
-# 2. вт╤╞кякВ BSP ╨м SYSTEM обкЫспвсд©б╪╣д .c нд╪Ч
+# 2. Х┤╙Е┼╗Ф░°Г╢╒ BSP Е▓▄ SYSTEM Д╦▀Ф┴─Ф°┴Е╜░Г⌡╝Е╫∙Г └ .c Ф√┤Д╩╤
 file(GLOB_RECURSE BSP_SOURCES 
     "${BSP_DIR}/*.c"
     "${SYSTEM_DIR}/*.c"
 )
 
-# 3. вт╤╞кякВкЫсп╟Э╨╛ .h ╣дд©б╪╡╒╪схК╟Э╨╛б╥╬╤
+# 3. Х┤╙Е┼╗Ф░°Г╢╒Ф┴─Ф°┴Е▄┘Е░╚ .h Г └Г⌡╝Е╫∙Е╧╤Е┼═Е┘╔Е▄┘Е░╚Х╥╞Е╬└
 file(GLOB_RECURSE BSP_HEADERS "${BSP_DIR}/*.h" "${SYSTEM_DIR}/*.h")
 set(BSP_INCLUDE_DIRS "")
 foreach(_headerFile ${BSP_HEADERS})
@@ -86,7 +86,7 @@ endforeach()
 list(REMOVE_DUPLICATES BSP_INCLUDE_DIRS)
 list(FILTER BSP_SOURCES EXCLUDE REGEX "lcd_ex.c")
 
-# 4. ╫╚кякВ╣╫╣днд╪Ч╨мб╥╬╤╧ьа╙╣╫╣╠г╟╧╓Ёл
+# 4. Е╟├Ф░°Г╢╒Е┬╟Г └Ф√┤Д╩╤Е▓▄Х╥╞Е╬└Е┘ЁХ│■Е┬╟Е╫⌠Е┴█Е╥╔Г╗▀
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${BSP_SOURCES})
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${BSP_INCLUDE_DIRS})
 
