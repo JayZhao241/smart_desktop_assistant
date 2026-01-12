@@ -20,9 +20,8 @@
 #include "main.h"
 #include "adc.h"
 #include "rtc.h"
-#include "stm32f4xx_hal_adc.h"
-#include "stm32f4xx_hal_def.h"
-#include "stm32f4xx_hal_rtc.h"
+#include "spi.h"
+#include "stm32f4xx_hal.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
@@ -35,7 +34,9 @@
 #include <stdio.h>
 
 #define V25 0.76f
-#define AVG_SLOPE 2.5f
+#define AVG_SLOPE 0.0025f
+#define SPI_CS_LOW()  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET)
+#define SPI_CS_HIGH() HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET)
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -69,9 +70,39 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+//重定向printf
 int __io_putchar(int ch) {
 HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, 0xFFFF);
 return ch;
+}
+
+//SPI读写函数
+uint8_t SPI1_ReadWriteByte(uint8_t tx_data)
+{
+    uint8_t rx_data = 0;
+    // 发送 tx_data，同时接收 rx_data，超时 100ms
+    HAL_SPI_TransmitReceive(&hspi1, &tx_data, &rx_data, 1, 100);
+    return rx_data;
+}
+
+//读取芯片ID
+uint16_t W25QXX_ReadID(void)
+{
+    uint16_t temp = 0;
+    
+    SPI_CS_LOW();             // 1. 拉低片选，选中芯片
+    SPI1_ReadWriteByte(0x90); // 2. 发送命令：读ID (0x90)
+    SPI1_ReadWriteByte(0x00); // 3. 发送 24位 假地址 (0,0,0)
+    SPI1_ReadWriteByte(0x00);
+    SPI1_ReadWriteByte(0x00);
+    
+    // 4. 接收数据
+    temp |= SPI1_ReadWriteByte(0xFF) << 8; // 读高8位 (厂家ID)
+    temp |= SPI1_ReadWriteByte(0xFF);      // 读低8位 (设备ID)
+    
+    SPI_CS_HIGH();            // 5. 拉高片选，结束通信
+    return temp;
 }
 /* USER CODE END 0 */
 
@@ -89,7 +120,7 @@ int main(void)
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-                                                                      HAL_Init();
+  HAL_Init();
 
   /* USER CODE BEGIN Init */
 
@@ -110,6 +141,7 @@ int main(void)
   MX_TIM12_Init();
   MX_USART1_UART_Init();
   MX_RTC_Init();
+  MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_PWM_Start(&htim12, TIM_CHANNEL_2); // 启动背光调试
 
@@ -117,7 +149,49 @@ int main(void)
   lcd_init();
   printf("初始化完成\n");
 
+    RTC_TimeTypeDef sTime = {0};
+    RTC_DateTypeDef sDate = {0};
+
+  //设置初始化时间
+  sTime.Hours = 00;
+  sTime.Minutes = 00;
+  sTime.Seconds = 00;
+  sTime.DayLightSaving = RTC_DAYLIGHTSAVING_NONE; 
+  sTime.StoreOperation = RTC_STOREOPERATION_RESET;
+  if (HAL_RTC_SetTime(&hrtc, &sTime,RTC_FORMAT_BIN))
+  {
+    Error_Handler();
+  }
+  sDate.Year=26;
+  sDate.Month=01;
+  sDate.Date=01;
+  sDate.WeekDay=RTC_WEEKDAY_MONDAY;
+  if (HAL_RTC_SetDate(&hrtc, &sDate,RTC_FORMAT_BIN))
+  {
+    Error_Handler();
+  }
+
+  //读取flash ID
+  printf("Reading W25Q128 ID...\r\n");
+  uint16_t flash_id = W25QXX_ReadID();
+  printf("Flash ID: 0x%X\r\n", flash_id);
+
   __HAL_TIM_SET_COMPARE(&htim12, TIM_CHANNEL_2, 6000);
+  lcd_clear(WHITE);
+
+  //在屏幕上显示ID
+  lcd_show_string(30, 220, 200, 16, 16, "Flash ID:", BLACK);
+  if (flash_id == 0xEF17) 
+  {
+      lcd_show_string(110, 220, 200, 16, 16, "0xEF17 (OK)", BLUE);
+  }
+  else
+  {
+      // 如果显示 0x0000 或 0xFFFF 说明 SPI 没通
+      lcd_show_xnum(110, 220, flash_id, 4, 16, 0, RED); 
+  }
+  HAL_Delay(5000);
+
   lcd_clear(WHITE);
   // lcd_show_string(30, 50, 200, 16, 16, "Explorer F407", RED);
   // lcd_show_string(30, 70, 200, 16, 16, "VSCode + CMake", BLUE);
@@ -132,26 +206,6 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    RTC_TimeTypeDef sTime = {0};
-    RTC_DateTypeDef sDate = {0};
-
-    sTime.Hours = 00;
-    sTime.Minutes = 00;
-    sTime.Seconds = 00;
-    sTime.DayLightSaving = RTC_DAYLIGHTSAVING_NONE; 
-    sTime.StoreOperation = RTC_STOREOPERATION_RESET;
-    if (HAL_RTC_SetTime(&hrtc, &sTime,RTC_FORMAT_BIN))
-    {
-      Error_Handler();
-    }
-    sDate.Year=26;
-    sDate.Month=01;
-    sDate.Date=01;
-    sDate.WeekDay=RTC_WEEKDAY_MONDAY;
-    if (HAL_RTC_SetDate(&hrtc, &sDate,RTC_FORMAT_BIN))
-    {
-      Error_Handler();
-    }
     HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
 
     HAL_ADC_Start(&hadc3);
@@ -179,18 +233,29 @@ int main(void)
     if (HAL_ADC_PollForConversion(&hadc1, 10)==HAL_OK) {
         temp_adc=HAL_ADC_GetValue(&hadc1); //读取传感器数值
         float temp_vol=(float)temp_adc*(3.3f/4096.0f); //换算成温度电压值
-        float chip_temp=(temp_vol-V25)/AVG_SLOPE+0.025; //计算温度
+        float chip_temp=(temp_vol-V25)/AVG_SLOPE+25; //计算温度
 
         //在屏幕上显示
-        lcd_show_string(30, 140, 200, 16, 16, "温度:",BLACK);
-        lcd_show_num(120, 140, (uint32_t) chip_temp, 2, 16, RED);
-        lcd_show_string(140, 140, 200, 16, 16, "°C", RED);
+        lcd_show_string(30, 90, 200, 16, 16, "Temp:",BLACK);
+        lcd_show_num(120, 90, (uint32_t) chip_temp, 2, 16, RED);
+        lcd_show_string(140, 90, 200, 16, 16, " C", RED);
     } //指定adc轮询
      HAL_ADC_Stop(&hadc1);
     
     //读取实时时间
     HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
     HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
+
+    char date_str[30]; // 定义一个足够长的字符数组
+    
+    // 格式化字符串
+    // %02d: 2位数字，不足补0
+    // sDate.Year 只有后两位(比如23)，所以前面手动加 "20" 变成 "2023"
+    sprintf(date_str, "20%02d-%02d-%02d", sDate.Year, sDate.Month, sDate.Date);
+    
+    // 显示在屏幕上 (假设显示在时间上方，y=150的位置)
+    // 字体用 16号小字，颜色用黑色
+    lcd_show_string(60, 150, 200, 16, 16, date_str, BLACK);
     
     char time_str[20];
     sprintf(time_str, "%02d:%02d:%02d", sTime.Hours, sTime.Minutes, sTime.Seconds);
