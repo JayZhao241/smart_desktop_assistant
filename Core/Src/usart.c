@@ -110,5 +110,8 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
 }
 
 /* USER CODE BEGIN 1 */
-
+int __io_putchar(int ch) {
+HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, 0xFFFF);
+return ch;
+}
 /* USER CODE END 1 */

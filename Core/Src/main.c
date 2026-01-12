@@ -21,7 +21,6 @@
 #include "adc.h"
 #include "rtc.h"
 #include "spi.h"
-#include "stm32f4xx_hal.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
@@ -57,6 +56,7 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
+static uint32_t g_fac_us=168; //微秒延时的倍乘数
 uint32_t pwm_val=0;
 uint16_t adc_val=0;
 uint16_t temp_adc=0;
@@ -65,45 +65,13 @@ uint16_t temp_adc=0;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-
+uint16_t W25QXX_ReadID(void);
+void W25QXX_Read(uint32_t addr, uint8_t *pBuffer, uint16_t len);
+void W25QXX_Write(uint32_t addr, uint8_t *pBuffer, uint16_t len);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
-//重定向printf
-int __io_putchar(int ch) {
-HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, 0xFFFF);
-return ch;
-}
-
-//SPI读写函数
-uint8_t SPI1_ReadWriteByte(uint8_t tx_data)
-{
-    uint8_t rx_data = 0;
-    // 发送 tx_data，同时接收 rx_data，超时 100ms
-    HAL_SPI_TransmitReceive(&hspi1, &tx_data, &rx_data, 1, 100);
-    return rx_data;
-}
-
-//读取芯片ID
-uint16_t W25QXX_ReadID(void)
-{
-    uint16_t temp = 0;
-    
-    SPI_CS_LOW();             // 1. 拉低片选，选中芯片
-    SPI1_ReadWriteByte(0x90); // 2. 发送命令：读ID (0x90)
-    SPI1_ReadWriteByte(0x00); // 3. 发送 24位 假地址 (0,0,0)
-    SPI1_ReadWriteByte(0x00);
-    SPI1_ReadWriteByte(0x00);
-    
-    // 4. 接收数据
-    temp |= SPI1_ReadWriteByte(0xFF) << 8; // 读高8位 (厂家ID)
-    temp |= SPI1_ReadWriteByte(0xFF);      // 读低8位 (设备ID)
-    
-    SPI_CS_HIGH();            // 5. 拉高片选，结束通信
-    return temp;
-}
 /* USER CODE END 0 */
 
 /**
@@ -114,7 +82,8 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
+  float max_temp_record=0.0f; //历史最高温
+  float current_temp=0.0f; //目前温度
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -143,33 +112,55 @@ int main(void)
   MX_RTC_Init();
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
+  __HAL_RCC_PWR_CLK_ENABLE();
+  HAL_PWR_EnableBkUpAccess();
+  W25QXX_Read(0x000000, (uint8_t*)&max_temp_record, 4);
+  
+  // 如果是第一次使用，读取到的可能是非法值 (NaN)
+  if (max_temp_record < 0 || max_temp_record > 100) {
+      max_temp_record = 0.0f; 
+  }
+  
+  printf("History Max Temp: %.2f\r\n", max_temp_record);
+
   HAL_TIM_PWM_Start(&htim12, TIM_CHANNEL_2); // 启动背光调试
 
   printf("LCD初始化中……\n");
   lcd_init();
   printf("初始化完成\n");
 
-    RTC_TimeTypeDef sTime = {0};
-    RTC_DateTypeDef sDate = {0};
+  RTC_TimeTypeDef sTime = {0};
+  RTC_DateTypeDef sDate = {0};
 
-  //设置初始化时间
-  sTime.Hours = 00;
-  sTime.Minutes = 00;
-  sTime.Seconds = 00;
-  sTime.DayLightSaving = RTC_DAYLIGHTSAVING_NONE; 
-  sTime.StoreOperation = RTC_STOREOPERATION_RESET;
-  if (HAL_RTC_SetTime(&hrtc, &sTime,RTC_FORMAT_BIN))
+  if (HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR0) != 0x5050)
   {
-    Error_Handler();
+
+    //设置初始化时间
+    sTime.Hours = 00;
+    sTime.Minutes = 00;
+    sTime.Seconds = 00;
+    sTime.DayLightSaving = RTC_DAYLIGHTSAVING_NONE; 
+    sTime.StoreOperation = RTC_STOREOPERATION_RESET;
+    if (HAL_RTC_SetTime(&hrtc, &sTime,RTC_FORMAT_BIN))
+    {
+      Error_Handler();
+    }
+    sDate.Year=26;
+    sDate.Month=01;
+    sDate.Date=01;
+    sDate.WeekDay=RTC_WEEKDAY_MONDAY;
+    if (HAL_RTC_SetDate(&hrtc, &sDate,RTC_FORMAT_BIN))
+    {
+      Error_Handler();
+    }
+    HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR0, 0x5050);
   }
-  sDate.Year=26;
-  sDate.Month=01;
-  sDate.Date=01;
-  sDate.WeekDay=RTC_WEEKDAY_MONDAY;
-  if (HAL_RTC_SetDate(&hrtc, &sDate,RTC_FORMAT_BIN))
+  else
   {
-    Error_Handler();
+    printf("RTC已在运行，跳过时间设置\n");
   }
+
+  
 
   //读取flash ID
   printf("Reading W25Q128 ID...\r\n");
@@ -190,7 +181,7 @@ int main(void)
       // 如果显示 0x0000 或 0xFFFF 说明 SPI 没通
       lcd_show_xnum(110, 220, flash_id, 4, 16, 0, RED); 
   }
-  HAL_Delay(5000);
+  HAL_Delay(2000);
 
   lcd_clear(WHITE);
   // lcd_show_string(30, 50, 200, 16, 16, "Explorer F407", RED);
@@ -235,7 +226,19 @@ int main(void)
         float temp_vol=(float)temp_adc*(3.3f/4096.0f); //换算成温度电压值
         float chip_temp=(temp_vol-V25)/AVG_SLOPE+25; //计算温度
 
+        //记录历史最高温
+        current_temp=chip_temp;
+        if (current_temp>max_temp_record)
+        {
+          max_temp_record=current_temp;
+          W25QXX_Write(0x000000, (uint8_t *)&max_temp_record, 4);
+          printf("New Record Saved:%.2f\r\n",max_temp_record);
+        }
+
         //在屏幕上显示
+        lcd_show_string(30, 240, 200, 16, 16, "Max Record:", BLACK);
+        lcd_show_num(120, 240, (int)max_temp_record, 2, 16, MAGENTA);
+        lcd_show_string(140, 240, 200, 16, 16, "C", MAGENTA);
         lcd_show_string(30, 90, 200, 16, 16, "Temp:",BLACK);
         lcd_show_num(120, 90, (uint32_t) chip_temp, 2, 16, RED);
         lcd_show_string(140, 90, 200, 16, 16, " C", RED);
@@ -313,7 +316,110 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+//SPI读写函数
+uint8_t SPI1_ReadWriteByte(uint8_t tx_data)
+{
+    uint8_t rx_data = 0;
+    // 发送 tx_data，同时接收 rx_data，超时 100ms
+    HAL_SPI_TransmitReceive(&hspi1, &tx_data, &rx_data, 1, 100);
+    return rx_data;
+}
 
+//读取芯片ID
+uint16_t W25QXX_ReadID(void)
+{
+    uint16_t temp = 0;
+    
+    SPI_CS_LOW();             // 1. 拉低片选，选中芯片
+    SPI1_ReadWriteByte(0x90); // 2. 发送命令：读ID (0x90)
+    SPI1_ReadWriteByte(0x00); // 3. 发送 24位 假地址 (0,0,0)
+    SPI1_ReadWriteByte(0x00);
+    SPI1_ReadWriteByte(0x00);
+    
+    // 4. 接收数据
+    temp |= SPI1_ReadWriteByte(0xFF) << 8; // 读高8位 (厂家ID)
+    temp |= SPI1_ReadWriteByte(0xFF);      // 读低8位 (设备ID)
+    
+    SPI_CS_HIGH();            // 5. 拉高片选，结束通信
+    return temp;
+}
+// 写使能Flash
+void W25QXX_WriteEnable(void)
+{
+    SPI_CS_LOW();
+    SPI1_ReadWriteByte(0x06); // 发送写使能命令
+    SPI_CS_HIGH();
+}
+//等待芯片作用完毕
+void W25QXX_WaitBusy(void)
+{
+    uint8_t status = 0;
+    do {
+        SPI_CS_LOW();
+        SPI1_ReadWriteByte(0x05); // 读状态寄存器1
+        status = SPI1_ReadWriteByte(0xFF);
+        SPI_CS_HIGH();
+    } while (status & 0x01); // BIT0 为 1 表示忙
+}
+//擦除一个扇区
+void W25QXX_EraseSector(uint32_t addr)
+{
+    W25QXX_WriteEnable();
+    W25QXX_WaitBusy();
+    SPI_CS_LOW();
+    SPI1_ReadWriteByte(0x20); // 扇区擦除命令
+    SPI1_ReadWriteByte((uint8_t)(addr >> 16)); // 发送24位地址
+    SPI1_ReadWriteByte((uint8_t)(addr >> 8));
+    SPI1_ReadWriteByte((uint8_t)addr);
+    SPI_CS_HIGH();
+    W25QXX_WaitBusy(); // 等待擦除完成
+}
+//在指定地址写入数据
+void W25QXX_Write(uint32_t addr, uint8_t *pBuffer, uint16_t len)
+{
+    W25QXX_EraseSector(addr); // 先擦除
+    W25QXX_WriteEnable();
+    SPI_CS_LOW();
+    SPI1_ReadWriteByte(0x02); // 页编程命令
+    SPI1_ReadWriteByte((uint8_t)(addr >> 16));
+    SPI1_ReadWriteByte((uint8_t)(addr >> 8));
+    SPI1_ReadWriteByte((uint8_t)addr);
+    for(uint16_t i=0; i<len; i++) SPI1_ReadWriteByte(pBuffer[i]);
+    SPI_CS_HIGH();
+    W25QXX_WaitBusy();
+}
+//读取数据
+void W25QXX_Read(uint32_t addr, uint8_t *pBuffer, uint16_t len)
+{
+    SPI_CS_LOW();
+    SPI1_ReadWriteByte(0x03); // 读取命令
+    SPI1_ReadWriteByte((uint8_t)(addr >> 16));
+    SPI1_ReadWriteByte((uint8_t)(addr >> 8));
+    SPI1_ReadWriteByte((uint8_t)addr);
+    for(uint16_t i=0; i<len; i++) pBuffer[i] = SPI1_ReadWriteByte(0xFF);
+    SPI_CS_HIGH();
+}
+
+void delay_us(uint32_t nus)
+ {
+    uint32_t ticks;
+    uint32_t told, tnow, tcnt = 0;
+    uint32_t reload = SysTick->LOAD;   // LOAD的值 
+    ticks = nus * g_fac_us;            // 需要的节拍数 
+    told = SysTick->VAL;
+    while (1) {
+        tnow = SysTick->VAL;
+        if (tnow != told) {
+            if (tnow < told) {
+                tcnt += told - tnow;   // 这里注意 SysTick 是向下递减计数的 
+            } else {
+                tcnt += reload - tnow + told;
+            }
+            told = tnow;
+            if (tcnt >= ticks) break;  // 时间超过/等于要延时的时间,则退出 
+        }
+    }
+}
 /* USER CODE END 4 */
 
 /**
