@@ -38,6 +38,7 @@
 #define AVG_SLOPE 0.0025f
 #define SPI_CS_LOW()  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET)
 #define SPI_CS_HIGH() HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET)
+#define GRAPH_POINTS 100  // 趋势图的点数
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -62,6 +63,8 @@ static uint32_t g_fac_us=168; //微秒延时的倍乘数
 uint32_t pwm_val=0;
 uint16_t adc_val=0;
 uint16_t temp_adc=0;
+float temp_history[GRAPH_POINTS]; // 存储历史温度的数组
+uint8_t temp_index = 0;           // 当前记录到的位置
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -86,7 +89,7 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-  float max_temp_record=0.0f; //历史最高温
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        float max_temp_record=0.0f; //历史最高温
   float current_temp=0.0f; //目前温度
   /* USER CODE END 1 */
 
@@ -134,28 +137,6 @@ int main(void)
   lcd_init();
   printf("初始化完成\n");
 
-  RTC_TimeTypeDef sTime = {0};
-
-  if (HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR0) != 0x5050)
-  {
-
-    //设置初始化时间
-    sTime.Hours = 00;
-    sTime.Minutes = 00;
-    sTime.Seconds = 00;
-    sTime.DayLightSaving = RTC_DAYLIGHTSAVING_NONE; 
-    sTime.StoreOperation = RTC_STOREOPERATION_RESET;
-    if (HAL_RTC_SetTime(&hrtc, &sTime,RTC_FORMAT_BIN))
-    {
-      Error_Handler();
-    }
-    HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR0, 0x5050);
-  }
-  else
-  {
-    printf("RTC已在运行，跳过时间设置\n");
-  }
-
   
 
   //读取flash ID
@@ -183,6 +164,34 @@ int main(void)
   // lcd_show_string(30, 50, 200, 16, 16, "Explorer F407", RED);
   // lcd_show_string(30, 70, 200, 16, 16, "VSCode + CMake", BLUE);
   HAL_Delay(1000);
+
+  RTC_TimeTypeDef sTime = {0};
+  RTC_DateTypeDef sDate = {0};
+
+  if (HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR0) != 0x5050)
+  {
+
+    //设置初始化时间
+    sTime.Hours = 00;
+    sTime.Minutes = 00;
+    sTime.Seconds = 00;
+    sTime.DayLightSaving = RTC_DAYLIGHTSAVING_NONE; 
+    sTime.StoreOperation = RTC_STOREOPERATION_RESET;
+    if (HAL_RTC_SetTime(&hrtc, &sTime,RTC_FORMAT_BIN))
+    {
+      Error_Handler();
+    }
+    sDate.WeekDay = RTC_WEEKDAY_MONDAY;
+    sDate.Month = RTC_MONTH_JANUARY;
+    sDate.Date = 0x1;
+    sDate.Year = 0x0;
+    HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR0, 0x5050);
+  }
+  else
+  {
+    printf("RTC已在运行，跳过时间设置\n");
+  }
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -194,128 +203,10 @@ int main(void)
     /* USER CODE BEGIN 3 */
 
 
-    // 在屏幕上显示重置按钮
+    // 重置功能
+    //按钮显示
     lcd_draw_rectangle(150, 280, 220, 310, RED);
     lcd_show_string(160, 285, 200, 16, 16, "RESET", RED);
-
-
-
-    HAL_ADC_Start(&hadc3);
-    if (HAL_ADC_PollForConversion(&hadc3, 10)==HAL_OK) {
-        adc_val=HAL_ADC_GetValue(&hadc3); //读取传感器数值
-    } //指定adc轮询
-    HAL_ADC_Stop(&hadc3);
-
-    //接下来实现adc越小，背光越亮
-    if (adc_val>4000)  {
-      adc_val=4000;
-    }
-    pwm_val=10000-(adc_val*5)/2;
-    if (pwm_val<1000) {
-      pwm_val=1000;
-    }
-    if (pwm_val>8000){
-      pwm_val=8000;
-    }
-
-    __HAL_TIM_SET_COMPARE(&htim12, TIM_CHANNEL_2, pwm_val);
-    
-
-
-
-    //接下来读取内部温度
-    HAL_ADC_Start(&hadc1);
-    if (HAL_ADC_PollForConversion(&hadc1, 10)==HAL_OK) {
-        temp_adc=HAL_ADC_GetValue(&hadc1); //读取传感器数值
-        float temp_vol=(float)temp_adc*(3.3f/4096.0f); //换算成温度电压值
-        float chip_temp=(temp_vol-V25)/AVG_SLOPE+25; //计算温度
-        float safety_threshold = 50.0f; //安全温度
-        uint16_t temp_color=GREEN;
-
-
-
-
-        //记录历史最高温
-        current_temp=chip_temp;
-        if (current_temp>max_temp_record)
-        {
-          max_temp_record=current_temp;
-          W25QXX_Write(0x000000, (uint8_t *)&max_temp_record, 4);
-          printf("New Record Saved:%.2f\r\n",max_temp_record);
-        }
-
-
-
-
-        //自动报警系统
-        if (current_temp>safety_threshold)
-        {
-          HAL_GPIO_WritePin(BEEP_GPIO_Port, BEEP_Pin, GPIO_PIN_SET); //蜂鸣器
-          HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, GPIO_PIN_RESET); //灯亮
-          temp_color = RED;
-        }
-        else if (current_temp>42) {
-          temp_color=MAGENTA;
-        }
-        else {
-          HAL_GPIO_WritePin(BEEP_GPIO_Port, BEEP_Pin, GPIO_PIN_RESET); //停止鸣叫
-          HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, GPIO_PIN_SET); //灯灭
-        }
-
-
-
-        //顶部状态栏
-        lcd_draw_line(0, 35, 239, 45, LIGHTBLUE);
-        lcd_show_string(180, 10, 200, 16, 16, (current_temp > 50 ? "ERR!" : "RUN "), (current_temp > 50 ? RED : GREEN));
-
-
-        //温度显示
-        lcd_show_string(30, 110, 200, 16, 16, "Chip Temperature:", BLACK);
-        // 用大字体显示温度，颜色随温度变化
-        char temp_str[10];
-        sprintf(temp_str, "%.1f C", current_temp);
-        lcd_show_string(30, 130, 200, 24, 24, temp_str, temp_color);
-
-
-        //显示光照强度
-        uint8_t light_percent = 100 - (adc_val * 100 / 4095);
-        lcd_show_string(30, 50, 200, 16, 16, "Light Intensity:", BLACK);
-        UI_DrawProgressBar(30, 70, 180, 15, light_percent, YELLOW);
-
-        //在屏幕上显示
-        lcd_show_string(30, 240, 200, 16, 16, "Max Record:", BLACK);
-        lcd_show_num(120, 240, (int)max_temp_record, 2, 16, MAGENTA);
-        lcd_show_string(140, 240, 200, 16, 16, "C", MAGENTA);
-        lcd_show_string(30, 90, 200, 16, 16, "Temp:",BLACK);
-        lcd_show_num(120, 90, (uint32_t) chip_temp, 2, 16, RED);
-        lcd_show_string(140, 90, 200, 16, 16, " C", RED);
-    } //指定adc轮询
-     HAL_ADC_Stop(&hadc1);
-    
-
-
-
-    //读取实时时间
-    HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
-    // HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
-
-    // char date_str[30]; // 定义一个足够长的字符数组
-    
-    // // 格式化字符串
-    // // %02d: 2位数字，不足补0
-    // // sDate.Year 只有后两位(比如23)，所以前面手动加 "20" 变成 "2023"
-    // sprintf(date_str, "20%02d-%02d-%02d", sDate.Year, sDate.Month, sDate.Date);
-    
-    // // 显示在屏幕上 (假设显示在时间上方，y=150的位置)
-    // // 字体用 16号小字，颜色用黑色
-    // lcd_show_string(60, 150, 200, 16, 16, date_str, BLACK);
-    
-    char time_str[20];
-    sprintf(time_str, "%02d:%02d:%02d", sTime.Hours, sTime.Minutes, sTime.Seconds);
-    lcd_show_string(50, 180,200, 24, 24, time_str, BLUE);
-
-
-
     //触摸交互
     tp_dev.scan(0); // 扫描触摸屏
     if (tp_dev.sta & TP_PRES_DOWN)  // 如果按下
@@ -344,6 +235,100 @@ int main(void)
         lcd_clear(WHITE);
       }
     }
+
+    
+
+    //背光调节功能
+    HAL_ADC_Start(&hadc3);
+    if (HAL_ADC_PollForConversion(&hadc3, 10)==HAL_OK) {
+        adc_val=HAL_ADC_GetValue(&hadc3); //读取传感器数值
+    } //指定adc轮询
+    HAL_ADC_Stop(&hadc3);
+    //接下来实现adc越小，背光越亮
+    if (adc_val>4000)  {
+      adc_val=4000;
+    }
+    pwm_val=10000-(adc_val*5)/2;
+    if (pwm_val<1000) {
+      pwm_val=1000;
+    }
+    if (pwm_val>8000){
+      pwm_val=8000;
+    }
+    __HAL_TIM_SET_COMPARE(&htim12, TIM_CHANNEL_2, pwm_val);
+
+
+
+    //光照强度显示功能
+    uint8_t light_percent = 100 - (adc_val * 100 / 4095);
+    lcd_show_string(30, 50, 200, 16, 16, "Light Intensity:", BLACK);
+    UI_DrawProgressBar(30, 70, 180, 15, light_percent, YELLOW);
+    
+
+
+    //内部温度监控功能
+    //接下来读取内部温度
+    HAL_ADC_Start(&hadc1);
+    if (HAL_ADC_PollForConversion(&hadc1, 10)==HAL_OK) {
+        temp_adc=HAL_ADC_GetValue(&hadc1); //读取传感器数值
+        float temp_vol=(float)temp_adc*(3.3f/4096.0f); //换算成温度电压值
+        float chip_temp=(temp_vol-V25)/AVG_SLOPE+25; //计算温度
+        float safety_threshold = 50.0f; //安全温度
+        uint16_t temp_color;
+
+        //记录历史最高温
+        current_temp=chip_temp;
+        if (current_temp>max_temp_record)
+        {
+          max_temp_record=current_temp;
+          W25QXX_Write(0x000000, (uint8_t *)&max_temp_record, 4);
+          printf("New Record Saved:%.2f\r\n",max_temp_record);
+        }
+        //自动报警系统
+        if (current_temp>safety_threshold)
+        {
+          HAL_GPIO_WritePin(BEEP_GPIO_Port, BEEP_Pin, GPIO_PIN_SET); //蜂鸣器
+          HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, GPIO_PIN_RESET); //灯亮
+          temp_color = RED;
+        }
+        else if (current_temp>42) {
+          temp_color=MAGENTA;
+        }
+        else {
+          HAL_GPIO_WritePin(BEEP_GPIO_Port, BEEP_Pin, GPIO_PIN_RESET); //停止鸣叫
+          HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, GPIO_PIN_SET); //灯灭
+        }
+        //在屏幕上显示
+        lcd_show_string(30, 240, 200, 16, 16, "Max Record:", BLACK);
+        lcd_show_num(120, 240, (int)max_temp_record, 2, 16, MAGENTA);
+        lcd_show_string(140, 240, 200, 16, 16, "C", MAGENTA);
+        lcd_show_string(30, 90, 200, 16, 16, "Temp:",BLACK);
+        lcd_show_num(120, 90, (uint32_t) chip_temp, 2, 16, RED);
+        lcd_show_string(140, 90, 200, 16, 16, " C", RED);
+    } 
+     HAL_ADC_Stop(&hadc1);
+    
+
+
+
+    //计时器功能
+    HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
+    HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
+
+    char date_str[30]; // 定义一个足够长的字符数组
+    
+    // 格式化字符串
+    // %02d: 2位数字，不足补0
+    // sDate.Year 只有后两位(比如23)，所以前面手动加 "20" 变成 "2023"
+    sprintf(date_str, "20%02d-%02d-%02d", sDate.Year, sDate.Month, sDate.Date);
+    
+    // // 显示在屏幕上 (假设显示在时间上方，y=150的位置)
+    // // 字体用 16号小字，颜色用黑色
+    // lcd_show_string(60, 150, 200, 16, 16, date_str, BLACK);
+    
+    char time_str[20];
+    sprintf(time_str, "%02d:%02d:%02d", sTime.Hours, sTime.Minutes, sTime.Seconds);
+    lcd_show_string(50, 180,200, 24, 24, time_str, BLUE);
 
 
 
@@ -555,6 +540,41 @@ void UI_DrawProgressBar(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint8_t 
     if (percent > 0) {
         uint16_t fill_w = (w - 2) * percent / 100;
         lcd_fill(x + 1, y + 1, x + fill_w, y + h - 1, color);
+    }
+}
+
+
+
+// 绘制温度变化图函数
+void UI_DrawTrendGraph(uint16_t x, uint16_t y, uint16_t w, uint16_t h)
+{
+    // 1. 画坐标轴
+    lcd_draw_line(x, y, x + w, y, BLACK);      // X轴
+    lcd_draw_line(x, y, x, y - h, BLACK);      // Y轴
+    
+    // 2. 绘制数据点之间的连线
+    for (uint8_t i = 0; i < GRAPH_POINTS - 1; i++)
+    {
+        // 计算当前点和下一个点的坐标
+        // X坐标：起点 + (间距 * 索引)
+        uint16_t x1 = x + (i * w / GRAPH_POINTS);
+        uint16_t x2 = x + ((i + 1) * w / GRAPH_POINTS);
+        
+        // Y坐标映射 (高度范围 20~50度)
+        float t1 = temp_history[i];
+        float t2 = temp_history[i + 1];
+        
+        // 限幅处理
+        if (t1 < 20) t1 = 20; if (t1 > 80) t1 = 80;
+        if (t2 < 20) t2 = 20; if (t2 > 80) t2 = 80;
+
+        uint16_t y1 = y - (uint16_t)((t1 - 20) * h / 60);
+        uint16_t y2 = y - (uint16_t)((t2 - 20) * h / 60);
+
+        // 如果数据有效（不为0），则画线
+        if (t1 > 0 && t2 > 0) {
+            lcd_draw_line(x1, y1, x2, y2, BLUE);
+        }
     }
 }
 /* USER CODE END 4 */
