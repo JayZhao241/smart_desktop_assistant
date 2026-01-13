@@ -31,6 +31,8 @@
 #include "lcd.h"
 #include <stdint.h>
 #include <stdio.h>
+#include "touch.h"
+
 
 #define V25 0.76f
 #define AVG_SLOPE 0.0025f
@@ -68,6 +70,8 @@ void SystemClock_Config(void);
 uint16_t W25QXX_ReadID(void);
 void W25QXX_Read(uint32_t addr, uint8_t *pBuffer, uint16_t len);
 void W25QXX_Write(uint32_t addr, uint8_t *pBuffer, uint16_t len);
+void W25QXX_EraseSector(uint32_t addr);
+void UI_DrawProgressBar(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint8_t percent, uint16_t color);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -112,6 +116,7 @@ int main(void)
   MX_RTC_Init();
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
+  tp_dev.init();
   __HAL_RCC_PWR_CLK_ENABLE();
   HAL_PWR_EnableBkUpAccess();
   W25QXX_Read(0x000000, (uint8_t*)&max_temp_record, 4);
@@ -130,7 +135,6 @@ int main(void)
   printf("初始化完成\n");
 
   RTC_TimeTypeDef sTime = {0};
-  RTC_DateTypeDef sDate = {0};
 
   if (HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR0) != 0x5050)
   {
@@ -142,14 +146,6 @@ int main(void)
     sTime.DayLightSaving = RTC_DAYLIGHTSAVING_NONE; 
     sTime.StoreOperation = RTC_STOREOPERATION_RESET;
     if (HAL_RTC_SetTime(&hrtc, &sTime,RTC_FORMAT_BIN))
-    {
-      Error_Handler();
-    }
-    sDate.Year=26;
-    sDate.Month=01;
-    sDate.Date=01;
-    sDate.WeekDay=RTC_WEEKDAY_MONDAY;
-    if (HAL_RTC_SetDate(&hrtc, &sDate,RTC_FORMAT_BIN))
     {
       Error_Handler();
     }
@@ -187,7 +183,6 @@ int main(void)
   // lcd_show_string(30, 50, 200, 16, 16, "Explorer F407", RED);
   // lcd_show_string(30, 70, 200, 16, 16, "VSCode + CMake", BLUE);
   HAL_Delay(1000);
-
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -197,7 +192,13 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+
+
+    // 在屏幕上显示重置按钮
+    lcd_draw_rectangle(150, 280, 220, 310, RED);
+    lcd_show_string(160, 285, 200, 16, 16, "RESET", RED);
+
+
 
     HAL_ADC_Start(&hadc3);
     if (HAL_ADC_PollForConversion(&hadc3, 10)==HAL_OK) {
@@ -218,6 +219,9 @@ int main(void)
     }
 
     __HAL_TIM_SET_COMPARE(&htim12, TIM_CHANNEL_2, pwm_val);
+    
+
+
 
     //接下来读取内部温度
     HAL_ADC_Start(&hadc1);
@@ -225,6 +229,11 @@ int main(void)
         temp_adc=HAL_ADC_GetValue(&hadc1); //读取传感器数值
         float temp_vol=(float)temp_adc*(3.3f/4096.0f); //换算成温度电压值
         float chip_temp=(temp_vol-V25)/AVG_SLOPE+25; //计算温度
+        float safety_threshold = 50.0f; //安全温度
+        uint16_t temp_color=GREEN;
+
+
+
 
         //记录历史最高温
         current_temp=chip_temp;
@@ -234,6 +243,44 @@ int main(void)
           W25QXX_Write(0x000000, (uint8_t *)&max_temp_record, 4);
           printf("New Record Saved:%.2f\r\n",max_temp_record);
         }
+
+
+
+
+        //自动报警系统
+        if (current_temp>safety_threshold)
+        {
+          HAL_GPIO_WritePin(BEEP_GPIO_Port, BEEP_Pin, GPIO_PIN_SET); //蜂鸣器
+          HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, GPIO_PIN_RESET); //灯亮
+          temp_color = RED;
+        }
+        else if (current_temp>42) {
+          temp_color=MAGENTA;
+        }
+        else {
+          HAL_GPIO_WritePin(BEEP_GPIO_Port, BEEP_Pin, GPIO_PIN_RESET); //停止鸣叫
+          HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, GPIO_PIN_SET); //灯灭
+        }
+
+
+
+        //顶部状态栏
+        lcd_draw_line(0, 35, 239, 45, LIGHTBLUE);
+        lcd_show_string(180, 10, 200, 16, 16, (current_temp > 50 ? "ERR!" : "RUN "), (current_temp > 50 ? RED : GREEN));
+
+
+        //温度显示
+        lcd_show_string(30, 110, 200, 16, 16, "Chip Temperature:", BLACK);
+        // 用大字体显示温度，颜色随温度变化
+        char temp_str[10];
+        sprintf(temp_str, "%.1f C", current_temp);
+        lcd_show_string(30, 130, 200, 24, 24, temp_str, temp_color);
+
+
+        //显示光照强度
+        uint8_t light_percent = 100 - (adc_val * 100 / 4095);
+        lcd_show_string(30, 50, 200, 16, 16, "Light Intensity:", BLACK);
+        UI_DrawProgressBar(30, 70, 180, 15, light_percent, YELLOW);
 
         //在屏幕上显示
         lcd_show_string(30, 240, 200, 16, 16, "Max Record:", BLACK);
@@ -245,25 +292,98 @@ int main(void)
     } //指定adc轮询
      HAL_ADC_Stop(&hadc1);
     
+
+
+
     //读取实时时间
     HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
-    HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
+    // HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
 
-    char date_str[30]; // 定义一个足够长的字符数组
+    // char date_str[30]; // 定义一个足够长的字符数组
     
-    // 格式化字符串
-    // %02d: 2位数字，不足补0
-    // sDate.Year 只有后两位(比如23)，所以前面手动加 "20" 变成 "2023"
-    sprintf(date_str, "20%02d-%02d-%02d", sDate.Year, sDate.Month, sDate.Date);
+    // // 格式化字符串
+    // // %02d: 2位数字，不足补0
+    // // sDate.Year 只有后两位(比如23)，所以前面手动加 "20" 变成 "2023"
+    // sprintf(date_str, "20%02d-%02d-%02d", sDate.Year, sDate.Month, sDate.Date);
     
-    // 显示在屏幕上 (假设显示在时间上方，y=150的位置)
-    // 字体用 16号小字，颜色用黑色
-    lcd_show_string(60, 150, 200, 16, 16, date_str, BLACK);
+    // // 显示在屏幕上 (假设显示在时间上方，y=150的位置)
+    // // 字体用 16号小字，颜色用黑色
+    // lcd_show_string(60, 150, 200, 16, 16, date_str, BLACK);
     
     char time_str[20];
     sprintf(time_str, "%02d:%02d:%02d", sTime.Hours, sTime.Minutes, sTime.Seconds);
     lcd_show_string(50, 180,200, 24, 24, time_str, BLUE);
-    HAL_Delay(100);
+
+
+
+    //触摸交互
+    tp_dev.scan(0); // 扫描触摸屏
+    if (tp_dev.sta & TP_PRES_DOWN)  // 如果按下
+    {
+      // 检查触摸点是否在按钮区域内
+      if (tp_dev.x[0] > 150 && tp_dev.x[0] < 220 && tp_dev.y[0] > 280 && tp_dev.y[0] < 310)
+      {
+        // 1. 执行清除逻辑
+        max_temp_record = 0.0f;
+        W25QXX_EraseSector(0x000000); // 擦除 Flash 记录
+
+        //重置计时器
+        sTime.Hours = 00;
+        sTime.Minutes = 00;
+        sTime.Seconds = 00;
+        sTime.DayLightSaving = RTC_DAYLIGHTSAVING_NONE; 
+        sTime.StoreOperation = RTC_STOREOPERATION_RESET;
+
+        if (HAL_RTC_SetTime(&hrtc, &sTime,RTC_FORMAT_BIN))
+        {
+          Error_Handler();
+        }
+        // 2.视觉反馈
+        lcd_clear(RED);
+        HAL_Delay(100);
+        lcd_clear(WHITE);
+      }
+    }
+
+
+
+    // 屏幕校准功能
+    static uint16_t key_up_press_count = 0;
+    if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0) == GPIO_PIN_SET) // 如果按键按下
+    {
+        key_up_press_count++;
+        if (key_up_press_count > 10) { // 按住超过 0.5 秒开始显示
+            lcd_show_string(30, 10, 200, 16, 16, "Calibrating...", RED);
+            lcd_fill(30, 30, 30 + (key_up_press_count * 2), 35, RED); 
+        }
+      }
+    else {
+        if (key_up_press_count > 0) // 如果之前显示过提示，松开时清除它
+        {
+            lcd_fill(30, 10, 230, 40, WHITE); // 擦除提示区域
+        }
+        key_up_press_count = 0; // 计数归零
+      }
+    if (key_up_press_count >= 40) 
+    {
+        key_up_press_count = 0; // 触发前先归零
+        HAL_GPIO_WritePin(GPIOF, GPIO_PIN_8, GPIO_PIN_SET); // 蜂鸣器响一声提示进入
+        HAL_Delay(100);
+        HAL_GPIO_WritePin(GPIOF, GPIO_PIN_8, GPIO_PIN_RESET);
+        
+        printf("Entering Calibration from Loop...\r\n");
+        
+        tp_adjust(); // 执行校准（这个函数是阻塞的，直到校准完成）
+        
+        // 【关键】校准完后，屏幕被 tp_adjust 弄乱了，必须重新绘制你的 UI
+        lcd_clear(WHITE);
+        lcd_draw_rectangle(150, 280, 220, 310, RED);
+        lcd_show_string(160, 285, 200, 16, 16, "RESET", RED);
+    }
+
+
+    HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
+    HAL_Delay(50 + (adc_val / 40));
   }
   /* USER CODE END 3 */
 }
@@ -418,6 +538,23 @@ void delay_us(uint32_t nus)
             told = tnow;
             if (tcnt >= ticks) break;  // 时间超过/等于要延时的时间,则退出 
         }
+    }
+}
+
+
+
+// 绘制进度条函数
+void UI_DrawProgressBar(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint8_t percent, uint16_t color)
+{
+    if (percent > 100) percent = 100;
+    // 1. 画外框
+    lcd_draw_rectangle(x, y, x + w, y + h, BLACK);
+    // 2. 清除背景（白色）
+    lcd_fill(x + 1, y + 1, x + w - 1, y + h - 1, WHITE);
+    // 3. 填充进度
+    if (percent > 0) {
+        uint16_t fill_w = (w - 2) * percent / 100;
+        lcd_fill(x + 1, y + 1, x + fill_w, y + h - 1, color);
     }
 }
 /* USER CODE END 4 */

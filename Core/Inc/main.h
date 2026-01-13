@@ -60,8 +60,12 @@ void delay_us(uint32_t nus);
 /* Private defines -----------------------------------------------------------*/
 #define BEEP_Pin GPIO_PIN_8
 #define BEEP_GPIO_Port GPIOF
-#define LED_Pin GPIO_PIN_9
-#define LED_GPIO_Port GPIOF
+#define LED0_Pin GPIO_PIN_9
+#define LED0_GPIO_Port GPIOF
+#define LED1_Pin GPIO_PIN_10
+#define LED1_GPIO_Port GPIOF
+#define KEY_UP_Pin GPIO_PIN_0
+#define KEY_UP_GPIO_Port GPIOA
 #define SPI_CS_Pin GPIO_PIN_14
 #define SPI_CS_GPIO_Port GPIOB
 
