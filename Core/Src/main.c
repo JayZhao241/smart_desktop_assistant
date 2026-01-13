@@ -22,6 +22,7 @@
 #include "rtc.h"
 #include "spi.h"
 #include "stm32f4xx_hal.h"
+#include "stm32f4xx_hal_adc.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
@@ -66,6 +67,8 @@ uint16_t adc_val=0;
 uint16_t temp_adc=0;
 float temp_history[GRAPH_POINTS]; // 存储历史温度的数组
 uint8_t temp_index = 0;           // 当前记录到的位置
+uint8_t gui_mode = 0;  // 0: 主界面, 1: 温度趋势图界面
+uint32_t last_log_time = 0; // 用于后台定时记录温度
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -92,8 +95,9 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        float max_temp_record=0.0f; //历史最高温
+  uint16_t temp_color=0;                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          float max_temp_record=0.0f; //历史最高温
   float current_temp=0.0f; //目前温度
+  float safety_threshold=50.0f;
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -216,35 +220,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-
-
-    // 重置功能
-    //按钮显示
-    lcd_draw_rectangle(150, 280, 220, 310, RED);
-    lcd_show_string(165, 285, 200, 16, 16, "RESET", RED);
-    // 温度趋势图按钮
-    lcd_draw_rectangle(10, 280, 80, 310, GREEN);
-    lcd_show_string(25, 285, 200, 16, 16, "Temp", GREEN);
-    //触摸交互
-    tp_dev.scan(0); // 扫描触摸屏
-    if (tp_dev.sta & TP_PRES_DOWN)  // 如果按下
-    {
-      // 检查触摸点是否在按钮区域内
-      if (tp_dev.x[0] > 150 && tp_dev.x[0] < 220 && tp_dev.y[0] > 280 && tp_dev.y[0] < 310)
-      {
-        // 1. 执行清除逻辑
-        max_temp_record = 0.0f;
-        W25QXX_EraseSector(0x000000); // 擦除 Flash 记录
-
-        // 2.视觉反馈
-        lcd_clear(RED);
-        HAL_Delay(100);
-        lcd_clear(WHITE);
-      }
-    }
-
     
-
     //背光调节功能
     HAL_ADC_Start(&hadc3);
     if (HAL_ADC_PollForConversion(&hadc3, 10)==HAL_OK) {
@@ -264,104 +240,36 @@ int main(void)
     }
     __HAL_TIM_SET_COMPARE(&htim12, TIM_CHANNEL_2, pwm_val);
 
-
-
-    //光照强度显示功能
-    uint8_t light_percent = 100 - (adc_val * 100 / 4095);
-    lcd_show_string(30, 50, 200, 16, 16, "Light Intensity:", BLACK);
-    UI_DrawProgressBar(30, 70, 180, 15, light_percent, YELLOW);
-    
-
-
+  
     //内部温度监控功能
     //接下来读取内部温度
     HAL_ADC_Start(&hadc1);
     if (HAL_ADC_PollForConversion(&hadc1, 10)==HAL_OK) {
         temp_adc=HAL_ADC_GetValue(&hadc1); //读取传感器数值
         float temp_vol=(float)temp_adc*(3.3f/4096.0f); //换算成温度电压值
-        float chip_temp=(temp_vol-V25)/AVG_SLOPE+25; //计算温度
-        float safety_threshold = 50.0f; //安全温度
-        uint16_t temp_color;
+        current_temp=(temp_vol-V25)/AVG_SLOPE+25; //计算温度
+    }
+    HAL_ADC_Stop(&hadc1);
 
-        //记录历史最高温
-        current_temp=chip_temp;
-        if (current_temp>max_temp_record)
-        {
-          max_temp_record=current_temp;
-          W25QXX_Write(0x000000, (uint8_t *)&max_temp_record, 4);
-          printf("New Record Saved:%.2f\r\n",max_temp_record);
-        }
+    if (HAL_GetTick() - last_log_time > 1000) // 每秒记录一次
+      {
+          last_log_time = HAL_GetTick();
+          
+          // 将旧数据前移
+          for (int i = 0; i < GRAPH_POINTS - 1; i++) {
+              temp_history[i] = temp_history[i + 1];
+          }
+          // 加入最新数据
+          temp_history[GRAPH_POINTS - 1] = current_temp;
 
-        tp_dev.scan(0); // 扫描触摸屏
-        if (tp_dev.sta & TP_PRES_DOWN)  // 如果按下
-        {
-         if (tp_dev.x[0] > 10 && tp_dev.x[0] < 80 && tp_dev.y[0] > 280 && tp_dev.y[0] < 310)
-         {
-          lcd_clear(WHITE);
-          while (1)
-          {
-            HAL_ADC_Start(&hadc1);
-            temp_adc=HAL_ADC_GetValue(&hadc1); //读取传感器数值
-            float temp_vol=(float)temp_adc*(3.3f/4096.0f); //换算成温度电压值
-            float chip_temp=(temp_vol-V25)/AVG_SLOPE+25; //计算温度
-            current_temp=chip_temp;
-            if (current_temp>max_temp_record)
+          if (current_temp>max_temp_record)
             {
               max_temp_record=current_temp;
               W25QXX_Write(0x000000, (uint8_t *)&max_temp_record, 4);
               printf("New Record Saved:%.2f\r\n",max_temp_record);
             }
-
-            //显示退出按钮
-            lcd_draw_rectangle(150, 280, 220, 310, RED);
-            lcd_show_string(165, 285, 200, 16, 16, "EXIT", RED);
-            static uint32_t last_log_time = 0;
-            if (HAL_GetTick() - last_log_time > 1000) // 每秒记录一次
-            {
-                last_log_time = HAL_GetTick();
-                
-                // 将旧数据前移
-                for (int i = 0; i < GRAPH_POINTS - 1; i++) {
-                    temp_history[i] = temp_history[i + 1];
-                }
-                // 加入最新数据
-                temp_history[GRAPH_POINTS - 1] = chip_temp;
-                
-                // 只有数据更新时才刷新图表区域，防止屏幕闪烁
-                // 先擦除旧区域
-                lcd_fill(30, 100, 230, 180, WHITE); 
-                // 画新图表 (左下角坐标为 30, 180, 宽200, 高80)
-                UI_DrawTrendGraph(30, 180, 200, 80);
-                lcd_draw_line(30, 130, 230, 130, RED);
-                lcd_show_string(30, 85, 200, 16, 16, "Temp Trend (60s):", BLACK);
-
-
-
-                lcd_show_string(30, 240, 200, 16, 16, "Max Record:", BLACK);
-                lcd_show_num(120, 240, (int)max_temp_record, 2, 16, MAGENTA);
-                lcd_show_string(140, 240, 200, 16, 16, "C", MAGENTA);
-                lcd_show_string(30, 50, 200, 16, 16, "Temp:",BLACK);
-                lcd_show_num(120, 50, (uint32_t) chip_temp, 2, 16, RED);
-                lcd_show_string(140, 50, 200, 16, 16, " C", RED);
-
-
-                LCD_Reset();
-
-
-                tp_dev.scan(0); // 扫描触摸屏
-                if (tp_dev.sta & TP_PRES_DOWN)  // 如果按下
-                {
-                  if (tp_dev.x[0] > 150 && tp_dev.x[0] < 220 && tp_dev.y[0] > 280 && tp_dev.y[0] < 310)
-                  {
-                    lcd_clear(WHITE);
-                    break;
-                  }
-                }
-                HAL_Delay(50);
-            }
-           }
-         }
         }
+
         
         //自动报警系统
         if (current_temp>safety_threshold)
@@ -382,14 +290,49 @@ int main(void)
         lcd_show_num(120, 240, (int)max_temp_record, 2, 16, MAGENTA);
         lcd_show_string(140, 240, 200, 16, 16, "C", MAGENTA);
         lcd_show_string(30, 90, 200, 16, 16, "Temp:",BLACK);
-        lcd_show_num(120, 90, (uint32_t) chip_temp, 2, 16, RED);
+        lcd_show_num(120, 90, (uint32_t) current_temp, 2, 16, RED);
         lcd_show_string(140, 90, 200, 16, 16, " C", RED);
     } 
      HAL_ADC_Stop(&hadc1);
+
+    // 屏幕校准功能
+    LCD_Reset();
+
+    // 重置功能
+    //按钮显示
+    lcd_draw_rectangle(150, 280, 220, 310, RED);
+    lcd_show_string(165, 285, 200, 16, 16, "RESET", RED);
+    //触摸交互
+    tp_dev.scan(0); // 扫描触摸屏
+    if (tp_dev.sta & TP_PRES_DOWN)  // 如果按下
+    {
+      // 检查触摸点是否在按钮区域内
+      if (tp_dev.x[0] > 150 && tp_dev.x[0] < 220 && tp_dev.y[0] > 280 && tp_dev.y[0] < 310)
+      {
+        // 1. 执行清除逻辑
+        max_temp_record = 0.0f;
+        W25QXX_EraseSector(0x000000); // 擦除 Flash 记录
+
+        // 2.视觉反馈
+        lcd_clear(RED);
+        HAL_Delay(100);
+        lcd_clear(WHITE);
+      }
+    }
+
+    if (gui_mode==0)
+    {
+    lcd_show_string(30, 240, 200, 16, 16, "Max Record:", BLACK);
+    lcd_show_num(120, 240, (int)max_temp_record, 2, 16, MAGENTA);
+    lcd_show_string(140, 240, 200, 16, 16, "C", MAGENTA);
+    lcd_show_string(30, 50, 200, 16, 16, "Temp:",BLACK);
+    lcd_show_num(120, 50, (uint32_t) current_temp, 2, 16, RED);
+    lcd_show_string(140, 50, 200, 16, 16, " C", RED);
+      
+    // 温度趋势图按钮
+    lcd_draw_rectangle(10, 280, 80, 310, GREEN);
+    lcd_show_string(25, 285, 200, 16, 16, "Temp", GREEN);
     
-
-
-
     //日期显示功能
     HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
     HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
@@ -409,17 +352,49 @@ int main(void)
     sprintf(time_str, "%02d:%02d:%02d", sTime.Hours, sTime.Minutes, sTime.Seconds);
     lcd_show_string(50, 180,200, 24, 24, time_str, BLUE);
 
+    //光照强度显示功能
+    uint8_t light_percent = 100 - (adc_val * 100 / 4095);
+    lcd_show_string(30, 50, 200, 16, 16, "Light Intensity:", BLACK);
+    UI_DrawProgressBar(30, 70, 180, 15, light_percent, YELLOW);
 
+    tp_dev.scan(0); // 扫描触摸屏
+    if (tp_dev.sta & TP_PRES_DOWN)  // 如果按下
+    {
+      if (tp_dev.x[0] > 10 && tp_dev.x[0] < 80 && tp_dev.y[0] > 280 && tp_dev.y[0] < 310)
+      {
+        gui_mode=1;
+        lcd_clear(WHITE);
+        HAL_Delay(50);
+      }
+    }
 
-    // 屏幕校准功能
-    LCD_Reset();
+    else if (gui_mode==1)
+    {
+      lcd_show_string(30, 85, 200, 16, 16, "Temp Trend (60s):", BLACK);
+      UI_DrawTrendGraph(30, 180, 200, 80);
 
+      lcd_show_string(30, 200, 200, 16, 16, "Current:", BLACK);
+      lcd_show_num(100, 200, (uint32_t)current_temp, 2, 16, BLUE);
+      //显示退出按钮
+      lcd_draw_rectangle(10, 280, 80, 310, RED);
+      lcd_show_string(25, 285, 200, 16, 16, "EXIT", RED);
+
+      tp_dev.scan(0); // 扫描触摸屏
+      if (tp_dev.sta & TP_PRES_DOWN)  // 如果按下
+      {
+        if (tp_dev.x[0] > 150 && tp_dev.x[0] < 220 && tp_dev.y[0] > 280 && tp_dev.y[0] < 310)
+        {
+          gui_mode=0;
+          lcd_clear(WHITE);
+          HAL_Delay(50);
+        }
+      }
+    }
 
     HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
     HAL_Delay(50 + (adc_val / 40));
   }
   /* USER CODE END 3 */
-}
 
 /**
   * @brief System Clock Configuration
@@ -599,6 +574,9 @@ void UI_DrawTrendGraph(uint16_t x, uint16_t y, uint16_t w, uint16_t h)
     // 1. 画坐标轴
     lcd_draw_line(x, y, x + w, y, BLACK);      // X轴
     lcd_draw_line(x, y, x, y - h, BLACK);      // Y轴
+
+    uint16_t alert_y = y - (uint16_t)((50.0f - 20) * h / 60);
+    lcd_draw_line(x, alert_y, x + w, alert_y, RED);
     
     // 2. 绘制数据点之间的连线
     for (uint8_t i = 0; i < GRAPH_POINTS - 1; i++)
@@ -619,12 +597,10 @@ void UI_DrawTrendGraph(uint16_t x, uint16_t y, uint16_t w, uint16_t h)
         uint16_t y1 = y - (uint16_t)((t1 - 20) * h / 60);
         uint16_t y2 = y - (uint16_t)((t2 - 20) * h / 60);
 
+        uint16_t line_color=(t1 >50 || t2>50) ? RED : BLUE;
         // 如果数据有效（不为0），则画线
-        if (t1 > 0 && t1<50 && t2 > 0 && t2<50) {
-            lcd_draw_line(x1, y1, x2, y2, BLUE);
-        }
-        else {
-            lcd_draw_line(x1, y1, x2, y2, RED);
+        if (t1 > 0 && t2 > 0) {
+            lcd_draw_line(x1, y1, x2, y2, line_color);
         }
     }
 }
