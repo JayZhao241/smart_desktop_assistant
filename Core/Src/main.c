@@ -88,7 +88,7 @@ void UI_DrawProgressBar(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint8_t 
 int main(void)
 {
 
-  /* USER CODE BEGIN 1 */
+  /* USER CODE BEGIN 1 */                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         float max_temp_record=0.0f; //历史最高温
   float current_temp=0.0f; //目前温度
   /* USER CODE END 1 */
@@ -168,12 +168,31 @@ int main(void)
   RTC_TimeTypeDef sTime = {0};
   RTC_DateTypeDef sDate = {0};
 
+  // //设置初始化时间
+  // sTime.Hours = 15;
+  // sTime.Minutes = 50;
+  // sTime.Seconds = 00;
+  // sTime.DayLightSaving = RTC_DAYLIGHTSAVING_NONE; 
+  // sTime.StoreOperation = RTC_STOREOPERATION_RESET;
+  // if (HAL_RTC_SetTime(&hrtc, &sTime,RTC_FORMAT_BIN))
+  // {
+  //   Error_Handler();
+  // }
+  // sDate.WeekDay = RTC_WEEKDAY_TUESDAY;
+  // sDate.Month = 01;
+  // sDate.Date = 13;
+  // sDate.Year = 26;
+  // if (HAL_RTC_SetDate(&hrtc, &sDate,RTC_FORMAT_BIN))
+  // {
+  //   Error_Handler();
+  // }
+  // HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR0, 0x5050);
   if (HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR0) != 0x5050)
   {
 
     //设置初始化时间
-    sTime.Hours = 00;
-    sTime.Minutes = 00;
+    sTime.Hours = 15;
+    sTime.Minutes = 36;
     sTime.Seconds = 00;
     sTime.DayLightSaving = RTC_DAYLIGHTSAVING_NONE; 
     sTime.StoreOperation = RTC_STOREOPERATION_RESET;
@@ -181,10 +200,14 @@ int main(void)
     {
       Error_Handler();
     }
-    sDate.WeekDay = RTC_WEEKDAY_MONDAY;
-    sDate.Month = RTC_MONTH_JANUARY;
-    sDate.Date = 0x1;
-    sDate.Year = 0x0;
+    sDate.WeekDay = RTC_WEEKDAY_TUESDAY;
+    sDate.Month = 01;
+    sDate.Date = 13;
+    sDate.Year = 26;
+    if (HAL_RTC_SetDate(&hrtc, &sDate,RTC_FORMAT_BIN))
+    {
+      Error_Handler();
+    }
     HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR0, 0x5050);
   }
   else
@@ -218,17 +241,6 @@ int main(void)
         max_temp_record = 0.0f;
         W25QXX_EraseSector(0x000000); // 擦除 Flash 记录
 
-        //重置计时器
-        sTime.Hours = 00;
-        sTime.Minutes = 00;
-        sTime.Seconds = 00;
-        sTime.DayLightSaving = RTC_DAYLIGHTSAVING_NONE; 
-        sTime.StoreOperation = RTC_STOREOPERATION_RESET;
-
-        if (HAL_RTC_SetTime(&hrtc, &sTime,RTC_FORMAT_BIN))
-        {
-          Error_Handler();
-        }
         // 2.视觉反馈
         lcd_clear(RED);
         HAL_Delay(100);
@@ -311,7 +323,7 @@ int main(void)
 
 
 
-    //计时器功能
+    //日期显示功能
     HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
     HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
 
@@ -324,7 +336,7 @@ int main(void)
     
     // // 显示在屏幕上 (假设显示在时间上方，y=150的位置)
     // // 字体用 16号小字，颜色用黑色
-    // lcd_show_string(60, 150, 200, 16, 16, date_str, BLACK);
+    lcd_show_string(60, 150, 200, 16, 16, date_str, BLACK);
     
     char time_str[20];
     sprintf(time_str, "%02d:%02d:%02d", sTime.Hours, sTime.Minutes, sTime.Seconds);
