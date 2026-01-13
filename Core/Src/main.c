@@ -21,6 +21,7 @@
 #include "adc.h"
 #include "rtc.h"
 #include "spi.h"
+#include "stm32f4xx_hal.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
@@ -75,6 +76,8 @@ void W25QXX_Read(uint32_t addr, uint8_t *pBuffer, uint16_t len);
 void W25QXX_Write(uint32_t addr, uint8_t *pBuffer, uint16_t len);
 void W25QXX_EraseSector(uint32_t addr);
 void UI_DrawProgressBar(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint8_t percent, uint16_t color);
+void UI_DrawTrendGraph(uint16_t x, uint16_t y, uint16_t w, uint16_t h);
+void LCD_Reset(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -169,8 +172,8 @@ int main(void)
   RTC_DateTypeDef sDate = {0};
 
   // //设置初始化时间
-  // sTime.Hours = 15;
-  // sTime.Minutes = 50;
+  // sTime.Hours = 16;
+  // sTime.Minutes = 03;
   // sTime.Seconds = 00;
   // sTime.DayLightSaving = RTC_DAYLIGHTSAVING_NONE; 
   // sTime.StoreOperation = RTC_STOREOPERATION_RESET;
@@ -186,24 +189,13 @@ int main(void)
   // {
   //   Error_Handler();
   // }
-  // HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR0, 0x5050);
+  HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR0, 0x5050);
   if (HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR0) != 0x5050)
   {
-
-    //设置初始化时间
-    sTime.Hours = 15;
-    sTime.Minutes = 36;
-    sTime.Seconds = 00;
-    sTime.DayLightSaving = RTC_DAYLIGHTSAVING_NONE; 
-    sTime.StoreOperation = RTC_STOREOPERATION_RESET;
     if (HAL_RTC_SetTime(&hrtc, &sTime,RTC_FORMAT_BIN))
     {
       Error_Handler();
     }
-    sDate.WeekDay = RTC_WEEKDAY_TUESDAY;
-    sDate.Month = 01;
-    sDate.Date = 13;
-    sDate.Year = 26;
     if (HAL_RTC_SetDate(&hrtc, &sDate,RTC_FORMAT_BIN))
     {
       Error_Handler();
@@ -229,7 +221,10 @@ int main(void)
     // 重置功能
     //按钮显示
     lcd_draw_rectangle(150, 280, 220, 310, RED);
-    lcd_show_string(160, 285, 200, 16, 16, "RESET", RED);
+    lcd_show_string(165, 285, 200, 16, 16, "RESET", RED);
+    // 温度趋势图按钮
+    lcd_draw_rectangle(10, 280, 80, 310, GREEN);
+    lcd_show_string(25, 285, 200, 16, 16, "Temp", GREEN);
     //触摸交互
     tp_dev.scan(0); // 扫描触摸屏
     if (tp_dev.sta & TP_PRES_DOWN)  // 如果按下
@@ -296,6 +291,78 @@ int main(void)
           W25QXX_Write(0x000000, (uint8_t *)&max_temp_record, 4);
           printf("New Record Saved:%.2f\r\n",max_temp_record);
         }
+
+        tp_dev.scan(0); // 扫描触摸屏
+        if (tp_dev.sta & TP_PRES_DOWN)  // 如果按下
+        {
+         if (tp_dev.x[0] > 10 && tp_dev.x[0] < 80 && tp_dev.y[0] > 280 && tp_dev.y[0] < 310)
+         {
+          lcd_clear(WHITE);
+          while (1)
+          {
+            HAL_ADC_Start(&hadc1);
+            temp_adc=HAL_ADC_GetValue(&hadc1); //读取传感器数值
+            float temp_vol=(float)temp_adc*(3.3f/4096.0f); //换算成温度电压值
+            float chip_temp=(temp_vol-V25)/AVG_SLOPE+25; //计算温度
+            current_temp=chip_temp;
+            if (current_temp>max_temp_record)
+            {
+              max_temp_record=current_temp;
+              W25QXX_Write(0x000000, (uint8_t *)&max_temp_record, 4);
+              printf("New Record Saved:%.2f\r\n",max_temp_record);
+            }
+
+            //显示退出按钮
+            lcd_draw_rectangle(150, 280, 220, 310, RED);
+            lcd_show_string(165, 285, 200, 16, 16, "EXIT", RED);
+            static uint32_t last_log_time = 0;
+            if (HAL_GetTick() - last_log_time > 1000) // 每秒记录一次
+            {
+                last_log_time = HAL_GetTick();
+                
+                // 将旧数据前移
+                for (int i = 0; i < GRAPH_POINTS - 1; i++) {
+                    temp_history[i] = temp_history[i + 1];
+                }
+                // 加入最新数据
+                temp_history[GRAPH_POINTS - 1] = chip_temp;
+                
+                // 只有数据更新时才刷新图表区域，防止屏幕闪烁
+                // 先擦除旧区域
+                lcd_fill(30, 100, 230, 180, WHITE); 
+                // 画新图表 (左下角坐标为 30, 180, 宽200, 高80)
+                UI_DrawTrendGraph(30, 180, 200, 80);
+                lcd_draw_line(30, 130, 230, 130, RED);
+                lcd_show_string(30, 85, 200, 16, 16, "Temp Trend (60s):", BLACK);
+
+
+
+                lcd_show_string(30, 240, 200, 16, 16, "Max Record:", BLACK);
+                lcd_show_num(120, 240, (int)max_temp_record, 2, 16, MAGENTA);
+                lcd_show_string(140, 240, 200, 16, 16, "C", MAGENTA);
+                lcd_show_string(30, 50, 200, 16, 16, "Temp:",BLACK);
+                lcd_show_num(120, 50, (uint32_t) chip_temp, 2, 16, RED);
+                lcd_show_string(140, 50, 200, 16, 16, " C", RED);
+
+
+                LCD_Reset();
+
+
+                tp_dev.scan(0); // 扫描触摸屏
+                if (tp_dev.sta & TP_PRES_DOWN)  // 如果按下
+                {
+                  if (tp_dev.x[0] > 150 && tp_dev.x[0] < 220 && tp_dev.y[0] > 280 && tp_dev.y[0] < 310)
+                  {
+                    lcd_clear(WHITE);
+                    break;
+                  }
+                }
+                HAL_Delay(50);
+            }
+           }
+         }
+        }
+        
         //自动报警系统
         if (current_temp>safety_threshold)
         {
@@ -345,38 +412,7 @@ int main(void)
 
 
     // 屏幕校准功能
-    static uint16_t key_up_press_count = 0;
-    if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0) == GPIO_PIN_SET) // 如果按键按下
-    {
-        key_up_press_count++;
-        if (key_up_press_count > 10) { // 按住超过 0.5 秒开始显示
-            lcd_show_string(30, 10, 200, 16, 16, "Calibrating...", RED);
-            lcd_fill(30, 30, 30 + (key_up_press_count * 2), 35, RED); 
-        }
-      }
-    else {
-        if (key_up_press_count > 0) // 如果之前显示过提示，松开时清除它
-        {
-            lcd_fill(30, 10, 230, 40, WHITE); // 擦除提示区域
-        }
-        key_up_press_count = 0; // 计数归零
-      }
-    if (key_up_press_count >= 40) 
-    {
-        key_up_press_count = 0; // 触发前先归零
-        HAL_GPIO_WritePin(GPIOF, GPIO_PIN_8, GPIO_PIN_SET); // 蜂鸣器响一声提示进入
-        HAL_Delay(100);
-        HAL_GPIO_WritePin(GPIOF, GPIO_PIN_8, GPIO_PIN_RESET);
-        
-        printf("Entering Calibration from Loop...\r\n");
-        
-        tp_adjust(); // 执行校准（这个函数是阻塞的，直到校准完成）
-        
-        // 【关键】校准完后，屏幕被 tp_adjust 弄乱了，必须重新绘制你的 UI
-        lcd_clear(WHITE);
-        lcd_draw_rectangle(150, 280, 220, 310, RED);
-        lcd_show_string(160, 285, 200, 16, 16, "RESET", RED);
-    }
+    LCD_Reset();
 
 
     HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
@@ -572,7 +608,7 @@ void UI_DrawTrendGraph(uint16_t x, uint16_t y, uint16_t w, uint16_t h)
         uint16_t x1 = x + (i * w / GRAPH_POINTS);
         uint16_t x2 = x + ((i + 1) * w / GRAPH_POINTS);
         
-        // Y坐标映射 (高度范围 20~50度)
+        // Y坐标映射 (高度范围 20~80度)
         float t1 = temp_history[i];
         float t2 = temp_history[i + 1];
         
@@ -584,9 +620,47 @@ void UI_DrawTrendGraph(uint16_t x, uint16_t y, uint16_t w, uint16_t h)
         uint16_t y2 = y - (uint16_t)((t2 - 20) * h / 60);
 
         // 如果数据有效（不为0），则画线
-        if (t1 > 0 && t2 > 0) {
+        if (t1 > 0 && t1<50 && t2 > 0 && t2<50) {
             lcd_draw_line(x1, y1, x2, y2, BLUE);
         }
+        else {
+            lcd_draw_line(x1, y1, x2, y2, RED);
+        }
+    }
+}
+void LCD_Reset(void)
+{
+  static uint16_t key_up_press_count = 0;
+    if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0) == GPIO_PIN_SET) // 如果按键按下
+    {
+        key_up_press_count++;
+        if (key_up_press_count > 10) { // 按住超过 0.5 秒开始显示
+            lcd_show_string(30, 10, 200, 16, 16, "Calibrating...", RED);
+            lcd_fill(30, 30, 30 + (key_up_press_count * 2), 35, RED); 
+        }
+      }
+    else {
+        if (key_up_press_count > 0) // 如果之前显示过提示，松开时清除它
+        {
+            lcd_fill(30, 10, 230, 40, WHITE); // 擦除提示区域
+        }
+        key_up_press_count = 0; // 计数归零
+      }
+    if (key_up_press_count >= 40) 
+    {
+        key_up_press_count = 0; // 触发前先归零
+        HAL_GPIO_WritePin(GPIOF, GPIO_PIN_8, GPIO_PIN_SET); // 蜂鸣器响一声提示进入
+        HAL_Delay(100);
+        HAL_GPIO_WritePin(GPIOF, GPIO_PIN_8, GPIO_PIN_RESET);
+        
+        printf("Entering Calibration from Loop...\r\n");
+        
+        tp_adjust(); // 执行校准（这个函数是阻塞的，直到校准完成）
+        
+        // 【关键】校准完后，屏幕被 tp_adjust 弄乱了，必须重新绘制你的 UI
+        lcd_clear(WHITE);
+        lcd_draw_rectangle(150, 280, 220, 310, RED);
+        lcd_show_string(160, 285, 200, 16, 16, "RESET", RED);
     }
 }
 /* USER CODE END 4 */
